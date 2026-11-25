@@ -1,0 +1,7 @@
+services:
+  mips32:
+    build: .
+    image: mips32-didactico:local
+    ports:
+      - "8080:80"
+    restart: unless-stopped

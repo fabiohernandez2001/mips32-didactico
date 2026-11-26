@@ -101,7 +101,7 @@ export function createNode(type, x = 80, y = 80, extra = {}) {
 
 export function widthOf(node, port) {
   const spec = [...(PORTS[node.type]?.inputs || []), ...(PORTS[node.type]?.outputs || [])].find((item) => item.id === port);
-  return spec?.width === "config" ? Number(node.config.width || 32) : spec?.width;
+  return spec?.width === "config" ? Number(node.config?.width || 32) : spec?.width;
 }
 
 export function createDefaultGraph() {
@@ -215,7 +215,12 @@ function parseRegister(value, line) {
 }
 
 function signedImmediate(value, line) {
-  const parsed = parseNumber(value);
+  let parsed;
+  try {
+    parsed = parseNumber(value);
+  } catch (error) {
+    throw new Error(`Línea ${line}: inmediato no válido. ${error.message}`);
+  }
   if (parsed < -32768 || parsed > 32767) throw new Error(`Línea ${line}: el inmediato debe estar entre -32768 y 32767.`);
   return parsed & 0xffff;
 }
@@ -225,6 +230,7 @@ export function assembleProgram(source, startAddress) {
   const labels = new Map();
   const instructions = [];
   let address = u32(startAddress);
+  if ((address & 3) !== 0) throw new Error("El PC inicial del programa debe estar alineado a 4 bytes.");
 
   lines.forEach((raw, index) => {
     let text = raw.replace(/#.*/, "").replace(/;.*/, "").trim();
@@ -245,8 +251,9 @@ export function assembleProgram(source, startAddress) {
   const assembled = instructions.map(({ line, address: pc, text }) => {
     const [mnemonicRaw, ...operandParts] = text.split(/\s+/);
     const mnemonic = mnemonicRaw.toLowerCase();
-    const operands = operandParts.join(" ").split(",").map((part) => part.trim()).filter(Boolean);
+    const operands = operandParts.join(" ").split(",").map((part) => part.trim());
     const need = (count) => {
+      if (operands.some((operand) => !operand)) throw new Error(`Línea ${line}: hay un operando vacío en ${mnemonic}.`);
       if (operands.length !== count) throw new Error(`Línea ${line}: ${mnemonic} requiere ${count} operandos.`);
     };
     let encoding = 0;
@@ -267,7 +274,7 @@ export function assembleProgram(source, startAddress) {
     } else if (mnemonic === "lw" || mnemonic === "sw") {
       need(2);
       const rt = parseRegister(operands[0], line);
-      const memoryOperand = operands[1].match(/^(-?(?:0x[\da-f]+|0b[01]+|\d+))?\s*\(\s*(\$[\w]+)\s*\)$/i);
+      const memoryOperand = operands[1].match(/^(-?(?:0x[\da-f_]+|0b[01_]+|\d[\d_]*))?\s*\(\s*(\$[\w]+)\s*\)$/i);
       if (!memoryOperand) throw new Error(`Línea ${line}: usa el formato ${mnemonic} $rt, desplazamiento($base).`);
       const rs = parseRegister(memoryOperand[2], line);
       const immediate = signedImmediate(memoryOperand[1] || "0", line);
@@ -280,7 +287,7 @@ export function assembleProgram(source, startAddress) {
       const rt = parseRegister(operands[1], line);
       const target = labels.get(operands[2]);
       if (target === undefined) throw new Error(`Línea ${line}: no se encontró la etiqueta «${operands[2]}».`);
-      const delta = target - (pc + 4);
+      const delta = (u32(target) - u32(pc + 4)) | 0;
       if (delta % 4 !== 0) throw new Error(`Línea ${line}: el destino de rama debe estar alineado a 4 bytes.`);
       const offset = delta / 4;
       if (offset < -32768 || offset > 32767) throw new Error(`Línea ${line}: el destino de rama está fuera de alcance.`);
@@ -314,8 +321,12 @@ export function parseInitialState(pcText, registerText, memoryText) {
     const match = line.match(/^([^=\s]+)\s*=\s*(.+)$/);
     if (!match) throw new Error(`Registro, línea ${index + 1}: usa $t0 = 5.`);
     const register = parseRegister(match[1], index + 1);
-    if (register === 0) throw new Error("$zero siempre vale 0 y no se puede modificar.");
-    registers[register] = u32(parseNumber(match[2]));
+    if (register === 0) throw new Error(`Registro, línea ${index + 1}: $zero siempre vale 0 y no se puede modificar.`);
+    try {
+      registers[register] = u32(parseNumber(match[2]));
+    } catch (error) {
+      throw new Error(`Registro, línea ${index + 1}: ${error.message}`);
+    }
   });
   const memory = {};
   String(memoryText || "").split(/\r?\n/).forEach((raw, index) => {
@@ -323,9 +334,16 @@ export function parseInitialState(pcText, registerText, memoryText) {
     if (!line) return;
     const match = line.match(/^([^=\s]+)\s*=\s*(.+)$/);
     if (!match) throw new Error(`Memoria, línea ${index + 1}: usa 0x10010000 = 12.`);
-    const address = u32(parseNumber(match[1]));
+    let address;
+    let value;
+    try {
+      address = u32(parseNumber(match[1]));
+      value = u32(parseNumber(match[2]));
+    } catch (error) {
+      throw new Error(`Memoria, línea ${index + 1}: ${error.message}`);
+    }
     if ((address & 3) !== 0) throw new Error(`Memoria, línea ${index + 1}: la dirección debe estar alineada a 4 bytes.`);
-    memory[address] = u32(parseNumber(match[2]));
+    memory[address] = value;
   });
   return { pc, registers, memory };
 }
@@ -341,6 +359,7 @@ function resolveWidth(node, port) { return widthOf(node, port); }
 function sign16(value) { return ((value & 0xffff) << 16) >> 16; }
 
 function controlSignals(opcode) {
+  if (opcode == null) return null;
   const base = { regDst: 0, aluSrc: 0, memToReg: 0, regWrite: 0, memRead: 0, memWrite: 0, branch: 0, jump: 0, aluOp: 0 };
   if (opcode === 0) return { ...base, regDst: 1, regWrite: 1, aluOp: 2 };
   if (opcode === 35) return { ...base, aluSrc: 1, memToReg: 1, regWrite: 1, memRead: 1 };
@@ -348,7 +367,7 @@ function controlSignals(opcode) {
   if (opcode === 4) return { ...base, branch: 1, aluOp: 1 };
   if (opcode === 8) return { ...base, aluSrc: 1, regWrite: 1 };
   if (opcode === 2) return { ...base, jump: 1 };
-  return base;
+  return null;
 }
 
 function aluOperation(aluOp, funct) {
@@ -366,6 +385,13 @@ function requiredDependencyInputs(node) {
   if (node.type === "registerFile") return ["readRs", "readRt"];
   if (node.type === "dataMemory") return ["address", "memRead"];
   return (PORTS[node.type]?.inputs || []).map((port) => port.id);
+}
+
+function isSequentialBoundaryInput(node, portId) {
+  if (node.type === "pc") return portId === "next";
+  if (node.type === "registerFile") return ["writeRegister", "writeData", "regWrite"].includes(portId);
+  if (node.type === "dataMemory") return ["writeData", "memWrite"].includes(portId);
+  return false;
 }
 
 function evaluateNode(node, input, context) {
@@ -395,7 +421,8 @@ function evaluateNode(node, input, context) {
     }
     case "control": {
       const controls = controlSignals(input("opcode"));
-      Object.assign(out, controls);
+      if (controls) Object.assign(out, controls);
+      else for (const port of PORTS.control.outputs) out[port.id] = null;
       break;
     }
     case "aluControl": emit("operation", aluOperation(input("aluOp"), input("funct"))); break;
@@ -450,24 +477,78 @@ function evaluateNode(node, input, context) {
 
 function formatAddress(address) { return `0x${u32(address).toString(16).padStart(8, "0")}`; }
 
+function validateGraph(graph) {
+  if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.wires)) {
+    return "El circuito no tiene una lista válida de bloques y conexiones.";
+  }
+  const byId = new Map();
+  for (const node of graph.nodes) {
+    if (!node?.id || typeof node.id !== "string") return "Hay un bloque sin identificador válido.";
+    if (byId.has(node.id)) return `Hay más de un bloque con el identificador «${node.id}».`;
+    if (!PORTS[node.type]) return `El bloque «${node.name || node.id}» tiene un tipo desconocido.`;
+    byId.set(node.id, node);
+    if (["mux2", "constant"].includes(node.type)) {
+      const width = Number(node.config?.width || 32);
+      if (!Number.isInteger(width) || width < 1 || width > 32) {
+        return `${node.name}: el ancho configurado debe ser un entero entre 1 y 32 bits.`;
+      }
+    }
+  }
+
+  const incoming = new Map();
+  const wireIds = new Set();
+  for (const wire of graph.wires) {
+    if (!wire?.id || typeof wire.id !== "string") return "Hay una conexión sin identificador válido.";
+    if (wireIds.has(wire.id)) return `Hay más de una conexión con el identificador «${wire.id}».`;
+    wireIds.add(wire.id);
+    const source = byId.get(wire.from);
+    const target = byId.get(wire.to);
+    if (!source || !target) return `La conexión ${wire.id} apunta a un bloque que ya no existe.`;
+    const output = PORTS[source.type].outputs.find((port) => port.id === wire.fromPort);
+    const input = PORTS[target.type].inputs.find((port) => port.id === wire.toPort);
+    if (!output) return `La conexión ${wire.id} usa una salida desconocida en ${source.name}.`;
+    if (!input) return `La conexión ${wire.id} usa una entrada desconocida en ${target.name}.`;
+    const outWidth = resolveWidth(source, wire.fromPort);
+    const inWidth = resolveWidth(target, wire.toPort);
+    if (!Number.isInteger(outWidth) || outWidth < 1 || outWidth > 32) return `${source.name}.${output.label} tiene un ancho de señal no válido.`;
+    if (!Number.isInteger(inWidth) || inWidth < 1 || inWidth > 32) return `${target.name}.${input.label} tiene un ancho de señal no válido.`;
+    if (outWidth !== inWidth) {
+      return `Conexión inválida: ${source.name}.${output.label} (${outWidth} bits) no coincide con ${target.name}.${input.label} (${inWidth} bits).`;
+    }
+    const key = portKey(target.id, wire.toPort);
+    if (incoming.has(key)) return `La entrada ${target.name}.${input.label} recibe más de una señal.`;
+    incoming.set(key, wire);
+  }
+  return { byId, incoming };
+}
+
 export function stepCircuit(graph, program, runtime) {
   if (!program?.instructions?.length) return { error: "Carga un programa ensamblador antes de iniciar la simulación." };
+  if (!Array.isArray(program.instructions) || !(program.byAddress instanceof Map)) {
+    return { error: "El programa ensamblado no tiene una tabla de instrucciones válida." };
+  }
+  const validation = validateGraph(graph);
+  if (typeof validation === "string") return { error: validation };
+  const { byId, incoming } = validation;
 
-  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
-  const incoming = new Map();
-  for (const wire of graph.wires) {
-    const source = byId.get(wire.from); const target = byId.get(wire.to);
-    if (!source || !target) continue;
-    const outWidth = resolveWidth(source, wire.fromPort); const inWidth = resolveWidth(target, wire.toPort);
-    if (outWidth !== inWidth) return { error: `Conexión inválida: ${source.name}.${wire.fromPort} (${outWidth} bits) no coincide con ${target.name}.${wire.toPort} (${inWidth} bits).` };
-    const key = portKey(target.id, wire.toPort);
-    if (incoming.has(key)) return { error: `La entrada ${target.name}.${wire.toPort} recibe más de una señal.` };
-    incoming.set(key, wire);
+  if (!runtime || !Number.isFinite(runtime.pc) || !Number.isInteger(runtime.cycles)
+    || !Array.isArray(runtime.registers) || runtime.registers.length !== 32
+    || !runtime.memory || typeof runtime.memory !== "object") {
+    return { error: "El estado inicial del simulador está incompleto o no es válido." };
   }
 
   const roles = graph.roles || {};
-  const roleErrors = ["pc", "instructionMemory", "registerFile", "dataMemory"].filter((role) => !byId.has(roles[role]));
-  if (roleErrors.length) return { error: `Falta el bloque principal: ${roleErrors.join(", ")}.` };
+  const requiredRoles = {
+    pc: ["pc", "contador de programa"],
+    instructionMemory: ["instructionMemory", "memoria de instrucciones"],
+    registerFile: ["registerFile", "banco de registros"],
+    dataMemory: ["dataMemory", "memoria de datos"],
+  };
+  for (const [role, [type, label]] of Object.entries(requiredRoles)) {
+    const node = byId.get(roles[role]);
+    if (!node) return { error: `Falta el bloque principal «${label}».` };
+    if (node.type !== type) return { error: `El bloque asignado como «${label}» no es del tipo correcto.` };
+  }
 
   const sinkKeys = [
     portKey(roles.pc, "next"), portKey(roles.registerFile, "writeRegister"), portKey(roles.registerFile, "writeData"), portKey(roles.registerFile, "regWrite"),
@@ -535,12 +616,45 @@ export function stepCircuit(graph, program, runtime) {
     nodeSignals[id] = { inputs, outputs };
   }
 
+  // Fill late sequential inputs after every combinational source has settled.
+  // These ports feed state updates; they must not become combinational graph
+  // dependencies (especially PC.next, which would create a false PC cycle).
+  for (const id of order) {
+    const node = byId.get(id);
+    for (const port of PORTS[node.type].inputs) {
+      const wire = incoming.get(portKey(id, port.id));
+      if (!wire) continue;
+      nodeSignals[id].inputs[port.id] = values.get(portKey(wire.from, wire.fromPort)) ?? null;
+    }
+  }
+
   const fetchedAddress = nodeSignals[roles.instructionMemory]?.inputs?.address;
   const fetchedInstructionWord = nodeSignals[roles.instructionMemory]?.outputs?.instruction;
   if (fetchedAddress == null) return { error: "La memoria de instrucciones no recibe una señal de dirección." };
   if (fetchedInstructionWord == null) return { done: true, reason: `La memoria de instrucciones no contiene código en ${formatAddress(fetchedAddress)}.` };
   const currentInstruction = program.byAddress.get(u32(fetchedAddress));
   if (!currentInstruction) return { error: `La palabra de ${formatAddress(fetchedAddress)} no corresponde a una instrucción del programa cargado.` };
+
+  // A connected port is not enough: it must carry a real value this cycle.
+  // Check after detecting end-of-program so an empty fetch still stops normally.
+  for (const id of order) {
+    const node = byId.get(id);
+    const signals = nodeSignals[id];
+    for (const port of PORTS[node.type].inputs) {
+      if (isSequentialBoundaryInput(node, port.id)) continue;
+      const value = signals.inputs[port.id];
+      if (value == null) return { error: `No llega una señal válida a ${node.name}.${port.label}. Revisa la conexión y su origen.` };
+    }
+    for (const port of PORTS[node.type].outputs) {
+      const value = signals.outputs[port.id];
+      if (value == null) return { error: `${node.name}.${port.label} no puede producir una señal válida en este ciclo.` };
+      const width = resolveWidth(node, port.id);
+      const maxValue = width === 32 ? 0xffffffff : (2 ** width) - 1;
+      if (!Number.isInteger(value) || value < 0 || value > maxValue) {
+        return { error: `${node.name}.${port.label} produjo un valor fuera de su ancho de ${width} bits.` };
+      }
+    }
+  }
 
   const sinkValue = (nodeIdValue, port) => {
     const wire = incoming.get(portKey(nodeIdValue, port));
@@ -567,11 +681,15 @@ export function stepCircuit(graph, program, runtime) {
 
   let memoryWrite = null;
   const memory = { ...runtime.memory };
+  const memoryRead = sinkValue(roles.dataMemory, "memRead");
+  const memoryAddress = sinkValue(roles.dataMemory, "address");
+  if ((memWrite === 1 || memoryRead === 1) && memoryAddress != null && (memoryAddress & 3) !== 0) {
+    return { error: `Dirección desalineada ${formatAddress(memoryAddress)}: lw y sw necesitan múltiplos de 4.` };
+  }
   if (memWrite === 1) {
     const address = sinkValue(roles.dataMemory, "address");
     const value = sinkValue(roles.dataMemory, "writeData");
     if (address == null || value == null) return { error: "La memoria necesita dirección y dato cuando MemWrite está activo." };
-    if ((address & 3) !== 0) return { error: `Dirección desalineada ${formatAddress(address)}: lw y sw necesitan múltiplos de 4.` };
     memory[u32(address)] = u32(value);
     memoryWrite = { address: u32(address), value: u32(value) };
   }

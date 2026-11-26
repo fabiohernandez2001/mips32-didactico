@@ -111,6 +111,7 @@ function App() {
   const [program, setProgram] = useState(INITIAL_PROGRAM);
   const [runtime, setRuntime] = useState(() => initialRuntime(INITIAL_STATE));
   const [lastResult, setLastResult] = useState(null);
+  const [inputsCurrent, setInputsCurrent] = useState(true);
   const [message, setMessage] = useState("Circuito cargado. Avanza un ciclo para seguir las señales.");
   const [selected, setSelected] = useState(null);
   const [wireDraft, setWireDraft] = useState(null);
@@ -121,6 +122,7 @@ function App() {
   const graphRef = useRef(graph);
   const programRef = useRef(program);
   const runtimeRef = useRef(runtime);
+  const inputsCurrentRef = useRef(true);
   const runStepRef = useRef(null);
 
   graphRef.current = graph;
@@ -152,6 +154,15 @@ function App() {
   const memoryRows = useMemo(() => Object.entries(runtime.memory).map(([address, value]) => ({ address: Number(address), value })).sort((a, b) => a.address - b.address), [runtime.memory]);
 
   function selectItem(nextSelection) { setSelected(nextSelection); }
+
+  function changeInput(setter, value) {
+    setter(value);
+    inputsCurrentRef.current = false;
+    setInputsCurrent(false);
+    setRunning(false);
+    setLastResult(null);
+    setMessage("Hay cambios de entrada sin aplicar. Aplícalos para continuar.");
+  }
 
   function updateGraphNode(id, changes) {
     setGraph((previous) => ({ ...previous, nodes: previous.nodes.map((node) => node.id === id ? { ...node, ...changes } : node) }));
@@ -251,6 +262,9 @@ function App() {
 
   function applyInputs() {
     setRunning(false);
+    inputsCurrentRef.current = false;
+    setInputsCurrent(false);
+    setLastResult(null);
     try {
       const initial = parseInitialState(pcText, registerText, memoryText);
       const assembled = assembleProgram(assembly, initial.pc);
@@ -259,8 +273,9 @@ function App() {
       const next = initialRuntime(initial);
       setRuntime(next);
       runtimeRef.current = next;
+      inputsCurrentRef.current = true;
+      setInputsCurrent(true);
       setHistory([]);
-      setLastResult(null);
       setMessage(`Programa cargado: ${assembled.instructions.length} instrucciones desde ${hex(initial.pc)}.`);
     } catch (error) {
       setMessage(error.message || "No se pudieron aplicar las entradas.");
@@ -268,6 +283,10 @@ function App() {
   }
 
   function advanceOneCycle() {
+    if (!inputsCurrentRef.current) {
+      setMessage("Aplica las entradas actuales antes de continuar la simulación.");
+      return;
+    }
     setRunning(false);
     const result = stepCircuit(graphRef.current, programRef.current, runtimeRef.current);
     if (result.error) {
@@ -289,6 +308,11 @@ function App() {
   }
 
   runStepRef.current = () => {
+    if (!inputsCurrentRef.current) {
+      setRunning(false);
+      setMessage("Aplica las entradas actuales antes de continuar la simulación.");
+      return;
+    }
     const result = stepCircuit(graphRef.current, programRef.current, runtimeRef.current);
     if (result.error) {
       setRunning(false);
@@ -312,6 +336,9 @@ function App() {
 
   function resetExecution() {
     setRunning(false);
+    inputsCurrentRef.current = false;
+    setInputsCurrent(false);
+    setLastResult(null);
     try {
       const initial = parseInitialState(pcText, registerText, memoryText);
       const assembled = assembleProgram(assembly, initial.pc);
@@ -320,8 +347,9 @@ function App() {
       const next = initialRuntime(initial);
       setRuntime(next);
       runtimeRef.current = next;
+      inputsCurrentRef.current = true;
+      setInputsCurrent(true);
       setHistory([]);
-      setLastResult(null);
       setMessage("Ejecución reiniciada con las entradas actuales.");
     } catch (error) {
       setMessage(error.message || "No se pudo reiniciar la ejecución.");
@@ -346,10 +374,10 @@ function App() {
 
       <section className="simulation-bar">
         <div className="sim-controls">
-          <button className="control-button primary" onClick={advanceOneCycle} disabled={running}><span>▷|</span> Un ciclo</button>
+          <button className="control-button primary" onClick={advanceOneCycle} disabled={running || !inputsCurrent}><span>▷|</span> Un ciclo</button>
           {running
             ? <button className="control-button pause" onClick={() => { setRunning(false); setMessage("Simulación pausada."); }}><span>Ⅱ</span> Pausar</button>
-            : <button className="control-button" onClick={() => { setRunning(true); setMessage("Simulación en marcha."); }}><span>▶</span> Ejecutar</button>}
+            : <button className="control-button" onClick={() => { setRunning(true); setMessage("Simulación en marcha."); }} disabled={!inputsCurrent}><span>▶</span> Ejecutar</button>}
           <button className="control-button quiet-button" onClick={resetExecution}><span>↺</span> Reiniciar</button>
         </div>
         <div className="run-state"><div className={`run-pulse ${running ? "is-running" : ""}`} /><div><span className="eyebrow">CICLO {runtime.cycles}</span><strong>PC {hex(runtime.pc)}</strong></div></div>
@@ -435,10 +463,10 @@ function App() {
 
           <section className="inspector-section input-section">
             <div className="panel-heading"><div><span className="eyebrow">ENTRADAS</span><h2>Programa y estado</h2></div></div>
-            <label className="field-label">Programa MIPS <span>etiquetas con «:», comentarios con #</span><textarea className="code-input" value={assembly} spellCheck="false" onChange={(event) => setAssembly(event.target.value)} /></label>
-            <label className="field-label">PC inicial <input value={pcText} onChange={(event) => setPcText(event.target.value)} placeholder="0x00400000" /></label>
-            <label className="field-label">Registros iniciales <span>uno por línea, por ejemplo $t0 = 7</span><textarea className="small-input" value={registerText} spellCheck="false" onChange={(event) => setRegisterText(event.target.value)} placeholder="$t0 = 7&#10;$t1 = 5" /></label>
-            <label className="field-label">Memoria de datos <span>dirección de byte = valor</span><textarea className="small-input" value={memoryText} spellCheck="false" onChange={(event) => setMemoryText(event.target.value)} placeholder="0x10010000 = 12" /></label>
+            <label className="field-label">Programa MIPS <span>etiquetas con «:», comentarios con #</span><textarea className="code-input" value={assembly} spellCheck="false" onChange={(event) => changeInput(setAssembly, event.target.value)} /></label>
+            <label className="field-label">PC inicial <input value={pcText} onChange={(event) => changeInput(setPcText, event.target.value)} placeholder="0x00400000" /></label>
+            <label className="field-label">Registros iniciales <span>uno por línea, por ejemplo $t0 = 7</span><textarea className="small-input" value={registerText} spellCheck="false" onChange={(event) => changeInput(setRegisterText, event.target.value)} placeholder="$t0 = 7&#10;$t1 = 5" /></label>
+            <label className="field-label">Memoria de datos <span>dirección de byte = valor</span><textarea className="small-input" value={memoryText} spellCheck="false" onChange={(event) => changeInput(setMemoryText, event.target.value)} placeholder="0x10010000 = 12" /></label>
             <button className="apply-button" onClick={applyInputs}>Aplicar entradas y reiniciar <span>↻</span></button>
           </section>
 

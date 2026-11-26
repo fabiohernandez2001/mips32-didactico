@@ -1,0 +1,32 @@
+# Registro de actividad multiagente
+Fecha: 2026-11-26
+Solicitud de Cerebro: comprobar el código, corregir errores de implementación y establecer una revisión reiterativa coordinada; no ejecutar Docker.
+Estado inicial: pendiente.
+Asignaciones atómicas y no solapadas:
+- Cerebro: orquestación, orden y dependencias entre agentes, integración y revisión de resultados.
+- DESIGNER: interfaz visual responsive e interactiva; colores, tamaños, contornos y estados de señales. Alcance de archivos: `src/styles.css`.
+- ENGINE: funcionamiento de datos, señales y simulación. Alcance de archivos: `src/simulator.js`.
+- QA: pruebas de integración y extremo a extremo; archivo de pruebas propio tras la entrega de ENGINE.
+- LOGGER: registro append-only en este archivo; publicación GitHub y revisión Docker solo cuando Cerebro confirme los cambios.
+Comunicación recibida de Cerebro: establecer el registro de inicio y no editar otros archivos en esta fase.
+
+## 2026-11-26 — Actualización de coordinación
+- DESIGNER terminó; modificó únicamente `src/styles.css` con mejoras responsive y de estados visuales. Indicó que el error de conexión no se resalta sin una clase JSX.
+- QA, fase 1: señaló riesgos de `lw` desalineado y de que un formulario inválido conserve el estado anterior; compartió su plan funcional de pruebas.
+- ENGINE continúa en curso.
+- Estado de publicación: pendiente; no publicar en esta fase.
+
+## 2026-11-26 — Preparación de QA
+- QA terminó de preparar `src/simulator.test.js` con la cobertura funcional acordada.
+- Ejecución pendiente de la entrega de ENGINE y autorización de Cerebro.
+- Estado de publicación: pendiente; no publicar todavía.
+
+## 2026-11-26 — Entrega de ENGINE y verificación de QA
+- ENGINE corrigió el orden de señales en el límite secuencial de `src/simulator.js`; pasó `node --check`.
+- QA corrigió dos referencias de prueba y ejecutó `node --test src/simulator.test.js`: 14/14 pruebas aprobadas.
+- Publicación en GitHub pendiente de que Cerebro termine la revisión y build. No publicar todavía.
+
+## 2026-11-26 — QA ampliado y ajuste de instalación
+- QA informó `npm test`: 19/19 pruebas aprobadas, incluyendo validación de componentes/cables y opcode no admitido.
+- LOGGER verificó que existe `package-lock.json` y cambió solo el paso de instalación del `Dockerfile` de `npm install --no-audit --no-fund` a `npm ci --no-audit --no-fund`.
+- Docker no se ejecutó. Publicación en GitHub pendiente de la confirmación final de Cerebro tras revisión/build.

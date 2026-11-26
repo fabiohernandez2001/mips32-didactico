@@ -7,11 +7,12 @@ Simulador didáctico web de una ruta de datos MIPS32 monociclo. El diseño inici
 Necesitas Node.js y npm instalados.
 
 1. Abre una terminal en la carpeta del proyecto.
-2. Instala las dependencias: `npm install`.
+2. Instala las dependencias fijadas en el proyecto: `npm ci`.
 3. Inicia la aplicación: `npm run dev`.
 4. Abre en el navegador la dirección local que indique Vite.
 
 Para generar una versión de producción: `npm run build`. Para previsualizarla: `npm run preview`.
+Para ejecutar las pruebas del simulador: `npm test`.
 
 ## Iniciar con Docker
 
